@@ -1,84 +1,203 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
+import ReminderForm from '../components/ReminderForm';
+import ReminderList from '../components/ReminderList';
+import OverlayBubble from '../components/OverlayBubble';
 
-const slogans = [
-  "Turn chats into apps",
-  "Prompt. Ship. Repeat.",
-  "Build anything from a chat",
-  "Ideas → Apps, instantly",
-  "From zero to MVP in minutes",
-  "Your cofounder in the command line",
-  "Draft, iterate, deploy",
-  "Ship faster than you can type",
-  "Design in text, deliver in code",
-  "Dream it. Prompt it. Run it.",
-  "Chat-native app building",
-  "From prompt to product",
-  "One prompt, infinite apps",
-  "Stop scaffolding. Start shipping.",
-  "Prototype at the speed of thought",
-  "Make conversations executable"
-];
+export interface Reminder {
+  id: string;
+  text: string;
+  dateTime: Date;
+  isRepeating: boolean;
+  repeatInterval?: 'daily' | 'weekly' | 'monthly';
+  isActive: boolean;
+  color?: string;
+  soundEnabled: boolean;
+}
 
-export default function Landing() {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isVisible, setIsVisible] = useState(true);
+export default function Home() {
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [activeReminder, setActiveReminder] = useState<Reminder | null>(null);
+  const [isSnoozed, setIsSnoozed] = useState(false);
 
+  // Load reminders from localStorage on mount
   useEffect(() => {
-    const interval = setInterval(() => {
-      setIsVisible(false);
-      setTimeout(() => {
-        setCurrentIndex((prev) => (prev + 1) % slogans.length);
-        setIsVisible(true);
-      }, 400);
-    }, 2800);
-
-    return () => clearInterval(interval);
+    const saved = localStorage.getItem('reminders');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      setReminders(parsed.map((r: any) => ({
+        ...r,
+        dateTime: new Date(r.dateTime)
+      })));
+    }
   }, []);
 
-  return (
-    <div className="relative h-[100dvh] w-full overflow-hidden bg-black text-white">
-      {/* Enhanced animated aurora background layers */}
-      <div className="absolute inset-0 bg-aurora-layer-1" />
-      <div className="absolute inset-0 bg-aurora-layer-2" />
-      <div className="absolute inset-0 bg-aurora-layer-3" />
-      
-      {/* Floating particles overlay */}
-      <div className="absolute inset-0 bg-particles" />
-      
-      {/* Main content - centered */}
-      <main className="relative z-10 h-full flex flex-col items-center justify-center px-6">
-        <h1 className="text-center text-[clamp(28px,6vw,64px)] font-medium tracking-tight mb-4">
-          Turn Chats into Apps
-        </h1>
+  // Save reminders to localStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('reminders', JSON.stringify(reminders));
+  }, [reminders]);
+
+  // Check for active reminders
+  useEffect(() => {
+    const checkReminders = () => {
+      if (activeReminder || isSnoozed) return;
+
+      const now = new Date();
+      const dueReminder = reminders.find(reminder => {
+        if (!reminder.isActive) return false;
+        return reminder.dateTime <= now;
+      });
+
+      if (dueReminder) {
+        setActiveReminder(dueReminder);
         
-        {/* Rotating slogans */}
-        <div className="mt-4 h-8 md:h-10 overflow-hidden flex items-center justify-center">
-          <span
-            className={`inline-block text-center text-[clamp(18px,3vw,32px)] font-light transition-all duration-[400ms] ease-in-out ${
-              isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-2'
-            }`}
+        // Play notification sound if enabled
+        if (dueReminder.soundEnabled) {
+          // Create a simple beep sound using Web Audio API
+          try {
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+            
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.5);
+          } catch {
+            console.log('Notification sound played (Web Audio not supported)');
+          }
+        }
+
+        // Handle repeating reminders
+        if (dueReminder.isRepeating && dueReminder.repeatInterval) {
+          const nextDate = new Date(dueReminder.dateTime);
+          switch (dueReminder.repeatInterval) {
+            case 'daily':
+              nextDate.setDate(nextDate.getDate() + 1);
+              break;
+            case 'weekly':
+              nextDate.setDate(nextDate.getDate() + 7);
+              break;
+            case 'monthly':
+              nextDate.setMonth(nextDate.getMonth() + 1);
+              break;
+          }
+          
+          setReminders(prev => prev.map(r => 
+            r.id === dueReminder.id 
+              ? { ...r, dateTime: nextDate }
+              : r
+          ));
+        } else {
+          // Remove one-time reminders
+          setReminders(prev => prev.filter(r => r.id !== dueReminder.id));
+        }
+      }
+    };
+
+    const interval = setInterval(checkReminders, 1000);
+    return () => clearInterval(interval);
+  }, [reminders, activeReminder, isSnoozed]);
+
+  const addReminder = (reminder: Omit<Reminder, 'id'>) => {
+    const newReminder: Reminder = {
+      ...reminder,
+      id: Date.now().toString(),
+    };
+    setReminders(prev => [...prev, newReminder]);
+  };
+
+  const deleteReminder = (id: string) => {
+    setReminders(prev => prev.filter(r => r.id !== id));
+  };
+
+  const dismissBubble = () => {
+    setActiveReminder(null);
+    setIsSnoozed(false);
+  };
+
+  const snoozeBubble = () => {
+    setActiveReminder(null);
+    setIsSnoozed(true);
+    
+    // Re-enable after 5 minutes
+    setTimeout(() => {
+      setIsSnoozed(false);
+    }, 5 * 60 * 1000);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-4">
+      <div className="max-w-4xl mx-auto">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-bold text-gray-800 mb-2">
+            Persistent Reminder App
+          </h1>
+          <p className="text-gray-600">
+            Set reminders that won&apos;t let you ignore them!
+          </p>
+          
+          {/* Demo button */}
+          <button
+            onClick={() => {
+              const demoTime = new Date();
+              demoTime.setSeconds(demoTime.getSeconds() + 5);
+              addReminder({
+                text: "🎉 Demo reminder! This bright bubble won't go away until you dismiss it!",
+                dateTime: demoTime,
+                isRepeating: false,
+                isActive: true,
+                color: '#FFFF00',
+                soundEnabled: true,
+              });
+            }}
+            className="mt-4 bg-yellow-500 hover:bg-yellow-600 text-black font-bold py-2 px-4 rounded-lg border-2 border-red-500 transition-colors"
           >
-            {slogans[currentIndex]}
-          </span>
-        </div>
-      </main>
-      
-      {/* Start Prompting arrow pointing left - bottom left */}
-      <div className="absolute left-6 md:left-8 bottom-[5%] z-20 flex items-center gap-3 arrow-point-left">
-        <div className="flex items-center gap-2 text-white/80 font-medium text-sm md:text-base">
-          <svg 
-            className="w-5 h-5 md:w-6 md:h-6 animate-bounce-horizontal" 
-            fill="none" 
-            viewBox="0 0 24 24" 
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-          </svg>
-          <span>Start prompting</span>
+            🚨 Try Demo (5 seconds)
+          </button>
+        </header>
+
+        <div className="grid md:grid-cols-2 gap-8">
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800">
+              Create Reminder
+            </h2>
+            <ReminderForm onAddReminder={addReminder} />
+          </div>
+
+          <div className="bg-white rounded-lg shadow-md p-6">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-800">
+              Active Reminders
+            </h2>
+            <ReminderList 
+              reminders={reminders} 
+              onDeleteReminder={deleteReminder}
+            />
+          </div>
         </div>
       </div>
+
+      {/* Overlay Bubble */}
+      {activeReminder && (
+        <OverlayBubble
+          reminder={activeReminder}
+          onDismiss={dismissBubble}
+          onSnooze={snoozeBubble}
+        />
+      )}
     </div>
   );
 }
+
+
+
+
+
